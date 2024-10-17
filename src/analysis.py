@@ -1,7 +1,9 @@
 import matplotlib.pyplot as plt
 import pandas as pd
+import os
 
-def plot_results(history, title="Tuning Results"):
+
+def plot_results(history, title="Tuning Results", filename="plot.png"):
     history_df = pd.DataFrame(history)
     plt.figure(figsize=(10, 6))
     
@@ -22,4 +24,12 @@ def plot_results(history, title="Tuning Results"):
     plt.ylabel('Score')
     plt.legend()
     plt.grid(True)
-    plt.show()
+    
+    # Ensure that the "../results" directory exists, if not, create it
+    results_dir = os.path.join(os.path.dirname(__file__), '..', 'results')
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+
+    # Save the plot to the results directory
+    plt.savefig(os.path.join(results_dir, filename))
+    plt.close()

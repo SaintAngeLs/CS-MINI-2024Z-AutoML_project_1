@@ -13,7 +13,7 @@ def get_model_and_params(model_name):
             "min_samples_leaf": [1, 2, 4]
         }
     elif model_name == "xgboost":
-        model = XGBClassifier(use_label_encoder=False)
+        model = XGBClassifier()
         params = {
             "n_estimators": [50, 100, 200],
             "learning_rate": [0.01, 0.1, 0.2],

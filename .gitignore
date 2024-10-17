@@ -65,7 +65,7 @@ data/*.csv
 
 # Results files
 results/*.csv
-results/*.png
+# results/*.png
 
 # Ignore compiled files or object files
 *.o
