@@ -1,0 +1,76 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environment
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# PyCharm IDE specific files
+.idea/
+*.iml
+
+# VS Code specific files
+.vscode/
+
+# pytest cache
+.cache/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+*.orig
+
+# Ignore data files (add your own datasets as needed)
+data/*.csv
+
+# Results files
+results/*.csv
+results/*.png
+
+# Ignore compiled files or object files
+*.o
+*.out
+*.obj
+
+# macOS specific
+.DS_Store
