@@ -7,7 +7,7 @@ matplotlib.use('Agg')  # Use non-interactive backend for Matplotlib
 from data_loader import load_dataset
 from models import get_model_and_params
 from hyperparameter_tuning import grid_search, random_search, bayesian_optimization
-from analysis import plot_results, CriticalDifferencePlot
+from analysis import plot_results
 import os
 from sklearn.utils.multiclass import type_of_target
 
