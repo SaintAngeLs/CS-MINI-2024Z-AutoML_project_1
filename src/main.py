@@ -3,15 +3,19 @@ import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed, TimeoutError
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for Matplotlib
+import os
+import pandas as pd
+import numpy as np
+from sklearn.utils.multiclass import type_of_target
+from sklearn.preprocessing import StandardScaler
+import traceback
 
 from data_loader import load_dataset
 from models import get_model_and_params
 from hyperparameter_tuning import grid_search, random_search, bayesian_optimization
 from analysis import plot_results
-import os
-from sklearn.utils.multiclass import type_of_target
 
-# List of datasets to experiment on
+# List of datasets and models
 datasets = [
     'breast_cancer', 
     'iris', 
@@ -24,18 +28,25 @@ datasets = [
     'auto_insurance', 
     'blood_transfusion'
 ]
+models = ['xgboost', 'random_forest', 'elastic_net', 'gradient_boosting']
 
-# List of models to experiment with
-models = ['xgboost', 
-          'random_forest', 
-          'elastic_net', 
-          'gradient_boosting'
-          ]
+# Directory for storing results
+RESULTS_DIR = './results'
+os.makedirs(RESULTS_DIR, exist_ok=True)
 
-# Timeout limit for each hyperparameter tuning method (in seconds)
-TIMEOUT = 60  
+# Timeout limit (in seconds)
+TIMEOUT = 60 * 20  
 
-# Function to run a specific hyperparameter tuning method with timeout
+# Helper function to standardize the data
+def preprocess_data(X):
+    scaler = StandardScaler()
+    return scaler.fit_transform(X)
+
+# Function to detect task type and avoid incorrect model usage
+def is_classification_task(y):
+    return type_of_target(y) in ['binary', 'multiclass']
+
+# Function to handle timeouts
 def run_with_timeout(func, *args, timeout=TIMEOUT):
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(func, *args)
@@ -44,100 +55,149 @@ def run_with_timeout(func, *args, timeout=TIMEOUT):
             return result
         except TimeoutError:
             print(f"Timeout occurred in {func.__name__}. Skipping...")
-            return None, None
+            return None
+        except Exception as e:
+            print(f"Error in {func.__name__}: {e}")
+            print(traceback.format_exc())  # Log the traceback for debugging
+            return None
 
-# Function to detect task type and avoid incorrect model usage
-def is_classification_task(y):
-    return type_of_target(y) in ['binary', 'multiclass']
+# Function to store detailed tuning results
+def store_iteration_results(dataset_name, model_name, tuning_method, iteration, score, params):
+    scores_path = os.path.join(RESULTS_DIR, 'detailed_tuning_results.csv')
+    scores_df = pd.DataFrame({
+        'dataset': [dataset_name],
+        'model': [model_name],
+        'tuning_method': [tuning_method],
+        'iteration': [iteration],
+        'score': [score],
+        'parameters': [str(params)]
+    })
+    if os.path.exists(scores_path):
+        scores_df.to_csv(scores_path, mode='a', header=False, index=False)
+    else:
+        scores_df.to_csv(scores_path, mode='w', header=True, index=False)
 
-# Function to run experiments on a specific dataset-model combination
-def run_experiment(dataset_name, model_name, rankings):
+# Function to store the best score and parameters for each tuning method
+def store_best_score(dataset_name, model_name, tuning_method, best_score, best_params):
+    if best_score is not None:
+        summary_path = os.path.join(RESULTS_DIR, 'best_tuning_results.csv')
+        summary_entry = pd.DataFrame({
+            'dataset': [dataset_name],
+            'model': [model_name],
+            'tuning_method': [tuning_method],
+            'best_score': [best_score],
+            'best_parameters': [str(best_params)]
+        })
+        if os.path.exists(summary_path):
+            summary_entry.to_csv(summary_path, mode='a', header=False, index=False)
+        else:
+            summary_entry.to_csv(summary_path, mode='w', header=True, index=False)
+    else:
+        print(f"No best score to store for {dataset_name} with model {model_name} using {tuning_method}")
+
+# Padding helper function
+def pad_history(history):
+    """Ensure all lists in the history dictionary have the same length."""
+    max_length = max(len(v) for v in history.values())
+    for key in history:
+        history[key] += [None] * (max_length - len(history[key]))  # Pad with None
+
+# Main experiment function
+def run_experiment(dataset_name, model_name):
     try:
         print(f"\nRunning experiments on dataset: {dataset_name} with model: {model_name}")
         
-        # Load the dataset
+        # Load and preprocess the dataset
         try:
             X, y = load_dataset(dataset_name)
+            X = preprocess_data(X)  # Standardizing the features
         except ValueError as e:
             print(f"Dataset loading failed for {dataset_name}: {e}")
             return
 
-        # Check if the target type is continuous and skip models that require classification
+        # Check if the model is appropriate for the dataset
         if not is_classification_task(y) and model_name in ['svc', 'gradient_boosting', 'random_forest']:
-            print(f"Skipping {model_name} on dataset {dataset_name} due to continuous target for classification model.")
+            print(f"Skipping {model_name} on dataset {dataset_name} due to continuous target.")
             return
         
-        # Get the model and hyperparameter space
+        # Get model and hyperparameter configuration
         model, params = get_model_and_params(model_name)
         
-        # Run hyperparameter tuning methods with timeout
-        print("Running Grid Search...")
-        best_params_grid, best_score_grid = run_with_timeout(grid_search, model, params, X, y)
-        if best_params_grid is not None:
-            print(f"Best parameters (Grid Search): {best_params_grid}, Best score: {best_score_grid}")
-    
-        print("Running Random Search...")
-        best_params_random, best_score_random = run_with_timeout(random_search, model, params, X, y)
-        if best_params_random is not None:
-            print(f"Best parameters (Random Search): {best_params_random}, Best score: {best_score_random}")
-    
-        print("Running Bayesian Optimization...")
-        best_params_bayes, best_score_bayes = run_with_timeout(bayesian_optimization, model, params, X, y)
-        if best_params_bayes is not None:
-            print(f"Best parameters (Bayesian Optimization): {best_params_bayes}, Best score: {best_score_bayes}")
+        # Data structure to hold all tuning history for plotting
+        history = {
+            'iteration': [],
+            'grid_score': [],
+            'random_score': [],
+            'bayes_score': []
+        }
         
-        # If no tuning method returned valid results, skip further processing
-        if best_params_grid is None and best_params_random is None and best_params_bayes is None:
-            print(f"All tuning methods for {model_name} on {dataset_name} failed due to timeout.")
-            return
-        
-        # Log the tuning results for this dataset-model combination
-        history = [
-            {'iteration': 1, 'grid_score': best_score_grid, 'random_score': best_score_random, 'bayes_score': best_score_bayes},
-            {'iteration': 2, 'grid_score': best_score_grid - 0.01 if best_score_grid else None, 'random_score': best_score_random - 0.02 if best_score_random else None, 'bayes_score': best_score_bayes + 0.01 if best_score_bayes else None},
-            {'iteration': 3, 'grid_score': best_score_grid + 0.02 if best_score_grid else None, 'random_score': best_score_random + 0.01 if best_score_random else None, 'bayes_score': best_score_bayes + 0.03 if best_score_bayes else None}
-        ]
-        
-        # Create a unique filename for the plot
-        plot_filename = f"{dataset_name}_{model_name}_tuning_results.png"
-        
-        # Save the plot to the results directory without showing it
-        plot_results(history, title=f"Comparison of Tuning Methods on {dataset_name.capitalize()} with {model_name.capitalize()}", filename=plot_filename)
+        # Execute each tuning method with error handling
+        for tuning_method, search_func, score_key in [
+                ('grid_search', grid_search, 'grid_score'),
+                ('random_search', random_search, 'random_score'),
+                ('bayesian_optimization', bayesian_optimization, 'bayes_score')]:
+            
+            print(f"Running {tuning_method} on {model_name} with dataset {dataset_name}...")
+            try:
+                for iteration in range(1, 6):  # Example with 5 iterations for each tuning method
+                    result = run_with_timeout(search_func, model, params, X, y)
+                    
+                    if result:
+                        best_params, best_score = result
 
-        # Append the best score for critical difference diagram
-        best_score = max([h['bayes_score'] for h in history if h['bayes_score'] is not None])
-        rankings[model_name].append(best_score)
+                        # Store the score and parameters for the current tuning method and iteration
+                        store_iteration_results(dataset_name, model_name, tuning_method, iteration, best_score, best_params)
+                        
+                        # Store only the best score for summary if it's the last iteration
+                        if iteration == 5:
+                            store_best_score(dataset_name, model_name, tuning_method, best_score, best_params)
+                        
+                        # Update history for plotting
+                        history['iteration'].append(iteration)
+                        history[score_key].append(best_score)
+                        
+                        print(f"Iteration {iteration} ({tuning_method}): Best params: {best_params}, Score: {best_score}")
+                    else:
+                        # Append None for missing results in case of timeout or error
+                        history['iteration'].append(iteration)
+                        history[score_key].append(None)
+            
+            except Exception as e:
+                print(f"Error during {tuning_method} on {model_name} with dataset {dataset_name}: {e}")
+                print(traceback.format_exc())
+                # Ensure padding for failed iterations
+                for iteration in range(1, 6):
+                    history['iteration'].append(iteration)
+                    history[score_key].append(None)
+        
+        # Pad the history lists to ensure they are of the same length
+        pad_history(history)
+        
+        # Plot results for this experiment, checking for any empty data in history
+        if any(history[key] for key in ['grid_score', 'random_score', 'bayes_score']):
+            plot_title = f"Tuning Results: {dataset_name} - {model_name}"
+            plot_filename = f"{dataset_name}_{model_name}_tuning_results.png"
+            plot_results(history, title=plot_title, filename=plot_filename)
+        else:
+            print(f"No scores to plot for {dataset_name} with model {model_name}")
         
     except Exception as e:
-        print(f"Failed to run hyperparameter tuning on model {model_name} and dataset {dataset_name}: {e}")
+        print(f"Failed to run tuning on {model_name} and dataset {dataset_name}: {e}")
+        print(traceback.format_exc())
 
-# Run experiments in parallel using ProcessPoolExecutor
+
+# Parallel experiment execution
 for dataset_name in datasets:
-    rankings = {model: [] for model in models}  # Reset rankings for each dataset
-
     with ProcessPoolExecutor(max_workers=5) as executor:
-        future_to_experiment = {executor.submit(run_experiment, dataset_name, model_name, rankings): (dataset_name, model_name)
+        future_to_experiment = {executor.submit(run_experiment, dataset_name, model_name): (dataset_name, model_name)
                                 for model_name in models}
         
-        # Wait for all threads to complete
+        # Wait for completion and handle exceptions
         for future in as_completed(future_to_experiment):
             dataset_name, model_name = future_to_experiment[future]
             try:
-                future.result()  # This raises any exception caught during execution
+                future.result()  # Raises any exception caught during execution
             except Exception as exc:
                 print(f"{dataset_name} with {model_name} generated an exception: {exc}")
-
-    # # Generate the Critical Difference Diagram for the current dataset
-    # critical_difference_plot = CriticalDifferencePlot(alpha=0.05)
-    # avg_ranks = critical_difference_plot.calculate_average_ranks(rankings)
-    # p_values = critical_difference_plot.wilcoxon_holm(rankings)
-    
-    # critical_difference_plot.plot(
-    #     avg_ranks=avg_ranks, 
-    #     classifiers=list(avg_ranks.keys()), 
-    #     p_values=p_values, 
-    #     filename=f"{dataset_name}_cd_diagram.png", 
-    #     title=f"Critical Difference Diagram for {dataset_name.capitalize()}"
-    # )
 
 print("\nAll experiments completed.")
