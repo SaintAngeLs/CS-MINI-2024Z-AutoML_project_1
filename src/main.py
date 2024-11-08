@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 from sklearn.utils.multiclass import type_of_target
 from sklearn.preprocessing import StandardScaler
+import tracemalloc  # To track memory usage
 import traceback
 
 from data_loader import load_dataset
@@ -61,8 +62,8 @@ def run_with_timeout(func, *args, timeout=TIMEOUT):
             print(traceback.format_exc())  # Log the traceback for debugging
             return None
 
-# Function to store detailed tuning results
-def store_iteration_results(dataset_name, model_name, tuning_method, iteration, score, params):
+# Function to store detailed tuning results with time and memory data
+def store_iteration_results(dataset_name, model_name, tuning_method, iteration, score, params, wall_time, processor_time, memory_usage):
     scores_path = os.path.join(RESULTS_DIR, 'detailed_tuning_results.csv')
     scores_df = pd.DataFrame({
         'dataset': [dataset_name],
@@ -70,7 +71,10 @@ def store_iteration_results(dataset_name, model_name, tuning_method, iteration, 
         'tuning_method': [tuning_method],
         'iteration': [iteration],
         'score': [score],
-        'parameters': [str(params)]
+        'parameters': [str(params)],
+        'wall_time': [wall_time],
+        'processor_time': [processor_time],
+        'memory_usage': [memory_usage]
     })
     if os.path.exists(scores_path):
         scores_df.to_csv(scores_path, mode='a', header=False, index=False)
@@ -139,24 +143,36 @@ def run_experiment(dataset_name, model_name):
             
             print(f"Running {tuning_method} on {model_name} with dataset {dataset_name}...")
             try:
-                for iteration in range(1, 6):  # Example with 5 iterations for each tuning method
+                for iteration in range(1, 15):  # Using 15 iterations for each tuning method
+                    tracemalloc.start()  # Start tracking memory
+                    start_wall_time = time.perf_counter()
+                    start_processor_time = time.process_time()
+
                     result = run_with_timeout(search_func, model, params, X, y)
+                    
+                    wall_time = time.perf_counter() - start_wall_time
+                    processor_time = time.process_time() - start_processor_time
+                    _, peak_memory = tracemalloc.get_traced_memory()
+                    tracemalloc.stop()
                     
                     if result:
                         best_params, best_score = result
 
-                        # Store the score and parameters for the current tuning method and iteration
-                        store_iteration_results(dataset_name, model_name, tuning_method, iteration, best_score, best_params)
+                        # Store the score, time, and memory usage for the current tuning method and iteration
+                        store_iteration_results(
+                            dataset_name, model_name, tuning_method, iteration, best_score, best_params,
+                            wall_time, processor_time, peak_memory
+                        )
                         
                         # Store only the best score for summary if it's the last iteration
-                        if iteration == 5:
+                        if iteration == 15:
                             store_best_score(dataset_name, model_name, tuning_method, best_score, best_params)
                         
                         # Update history for plotting
                         history['iteration'].append(iteration)
                         history[score_key].append(best_score)
                         
-                        print(f"Iteration {iteration} ({tuning_method}): Best params: {best_params}, Score: {best_score}")
+                        print(f"Iteration {iteration} ({tuning_method}): Best params: {best_params}, Score: {best_score}, Wall Time: {wall_time:.2f}s, Processor Time: {processor_time:.2f}s, Memory: {peak_memory / 1024:.2f} KB")
                     else:
                         # Append None for missing results in case of timeout or error
                         history['iteration'].append(iteration)
@@ -184,7 +200,6 @@ def run_experiment(dataset_name, model_name):
     except Exception as e:
         print(f"Failed to run tuning on {model_name} and dataset {dataset_name}: {e}")
         print(traceback.format_exc())
-
 
 # Parallel experiment execution
 for dataset_name in datasets:

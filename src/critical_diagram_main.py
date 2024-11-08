@@ -2,98 +2,123 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib
-from critical import draw_cd_diagram, wilcoxon_holm
+import matplotlib.pyplot as plt
+import networkx as nx
+from scipy.stats import wilcoxon, friedmanchisquare
+import operator
 
 # Set up matplotlib to use non-interactive backend
 matplotlib.use('Agg')
+matplotlib.rcParams['font.family'] = 'sans-serif'
+matplotlib.rcParams['font.sans-serif'] = 'Arial'
 
-# Define the datasets and models used in your project
-datasets = [
-    'breast_cancer', 
-    'iris', 
-    'california_housing', 
-    'wine', 
-    'digits', 
-    'diabetes', 
-    'linnerud', 
-    'auto_mpg', 
-    'auto_insurance', 
-    'blood_transfusion'
-]
+def load_and_prepare_data(data_path):
+    # Load the dataset into a DataFrame and inspect column names
+    df = pd.read_csv(data_path)
+    print("Data loaded with columns:", df.columns)
+    return df
 
-models = ['xgboost', 'random_forest', 'elastic_net', 'gradient_boosting']
+# Function to form cliques based on p-values using Holm correction
+def form_cliques(p_values, classifiers):
+    m = len(classifiers)
+    g_data = np.zeros((m, m), dtype=np.int64)
+    for p in p_values:
+        if not p[3]:  # Not significant
+            i = classifiers.index(p[0])
+            j = classifiers.index(p[1])
+            g_data[min(i, j), max(i, j)] = 1
 
-# Directory to store results
-RESULTS_DIR = './results'
-PLOTS_DIR = './plots'
+    g = nx.Graph(g_data)
+    return list(nx.find_cliques(g))
 
-# Ensure that the directories exist
-os.makedirs(PLOTS_DIR, exist_ok=True)
 
-# Function to generate critical difference diagrams based on existing plot files
-def generate_critical_difference_diagram(dataset_name):
-    rankings = {model: [] for model in models}
-    dataset_len = len(datasets)
+def graph_ranks(avranks, classifiers, p_values, cd=None, reverse=False, width=10, textspace=1.5):
+    """
+    Basic CD diagram plotting function for classifier performance comparison.
+    This implementation is simple and may not include all the aesthetics of Orange3's graph_ranks.
+    """
+    n_classifiers = len(classifiers)
+    fig, ax = plt.subplots(figsize=(width, n_classifiers / 2))
 
-    # Check if the model tuning plot exists for each model
-    for model_name in models:
-        plot_path = os.path.join(RESULTS_DIR, f"{dataset_name}_{model_name}_tuning_results.png")
-        if os.path.exists(plot_path):
-            # Introduce slight variability to simulate different scores
-            score = np.random.uniform(0.80, 0.90, size=dataset_len)  # Simulate multiple scores for each dataset
-            rankings[model_name] = score  # Assign scores to each model
+    sorted_classifiers = sorted(avranks.items(), key=lambda x: x[1], reverse=reverse)
+    classifier_names, ranks = zip(*sorted_classifiers)
+
+    # Plot ranks
+    ax.plot(ranks, range(len(classifier_names)), 'o')
+    for i, (name, rank) in enumerate(sorted_classifiers):
+        ax.text(rank + textspace, i, name, verticalalignment='center')
+
+    ax.set_xlim([0, max(ranks) + textspace * 2])
+    ax.set_ylim([-1, len(classifiers)])
+
+    # Plot Critical Difference (CD) line if provided
+    if cd:
+        ax.hlines(y=len(classifiers) - 1, xmin=min(ranks) - cd / 2, xmax=min(ranks) + cd / 2, color='r', label='CD')
+        ax.legend()
+
+    ax.invert_yaxis()
+    ax.set_xlabel("Average Rank")
+    plt.tight_layout()
+    plt.show()
+
+def draw_cd_diagram(df, dataset_name, alpha=0.05):
+    # Filter data for a specific dataset
+    df_dataset = df[df['dataset'] == dataset_name]
+    print(f"Processing dataset: {dataset_name}")
+    
+    # Check if 'score' column exists in the filtered DataFrame
+    if 'best_score' not in df_dataset.columns:
+        print(f"Warning: 'score' column not found in dataset '{dataset_name}'. Skipping.")
+        return
+    
+    classifiers = df_dataset['model'].unique()
+
+    # Prepare the accuracy scores for Friedman test
+    scores = [df_dataset[df_dataset['model'] == model]['best_score'].values for model in classifiers]
+
+    # Apply Friedman's test to check overall significance
+    friedman_p_value = friedmanchisquare(*scores).pvalue
+    if friedman_p_value >= alpha:
+        print(f"No significant differences found for {dataset_name}")
+        return
+
+   # Wilcoxon-Holm corrected p-values for pairwise comparisons
+    p_values = []
+    for i in range(len(classifiers) - 1):
+        for j in range(i + 1, len(classifiers)):
+            if np.array_equal(scores[i], scores[j]):
+                # Identical scores, set p-value to 1.0
+                p_value = 1.0
+            else:
+                # Perform Wilcoxon test if scores differ
+                p_value = wilcoxon(scores[i], scores[j]).pvalue
+            p_values.append((classifiers[i], classifiers[j], p_value, False))
+
+
+    # Holm correction
+    k = len(p_values)
+    p_values.sort(key=operator.itemgetter(2))
+    for i in range(k):
+        new_alpha = alpha / (k - i)
+        if p_values[i][2] <= new_alpha:
+            p_values[i] = (p_values[i][0], p_values[i][1], p_values[i][2], True)
         else:
-            print(f"Tuning plot not found for {dataset_name} with {model_name}")
+            break
 
-    # If all rankings are empty, we skip generating the plot
-    if all(len(ranks) == 0 for ranks in rankings.values()):
-        print(f"No valid rankings for {dataset_name}. Skipping plot generation.")
-        return
+    # Calculate average ranks
+    df_ranks = pd.DataFrame([df_dataset[df_dataset['model'] == model]['best_score'].rank(ascending=False) for model in classifiers], index=classifiers).mean(axis=1).sort_values()
 
-    # Flatten rankings to prepare DataFrame for performance results for wilcoxon_holm function
-    classifier_names = []
-    accuracies = []
-    dataset_names = []
+    # Plot CD Diagram
+    avranks = df_ranks.to_dict()
+    graph_ranks(avranks, classifiers, p_values, cd=None, reverse=True, width=9, textspace=1.5)
+    plt.title(f"CD Diagram for {dataset_name}")
+    plt.savefig(f'cd-diagram-{dataset_name}.png', bbox_inches='tight')
+    plt.close()
 
-    for model_name, scores in rankings.items():
-        if len(scores) > 0:
-            classifier_names.extend([model_name] * len(scores))  # Add the model name multiple times (for each dataset)
-            accuracies.extend(scores)  # Append the scores
-            dataset_names.extend(datasets)  # Append corresponding datasets
+# Main function to process each dataset
+def main(data_path):
+    df = load_and_prepare_data(data_path)
+    for dataset_name in df['dataset'].unique():
+        draw_cd_diagram(df, dataset_name)
 
-    # Check if we have at least 3 classifiers with data for Friedman test
-    unique_classifiers = set(classifier_names)
-    if len(unique_classifiers) < 3:
-        print(f"Not enough classifiers with results for {dataset_name}. Skipping Friedman test.")
-        return
-
-    # Creating the DataFrame
-    df_perf = pd.DataFrame({
-        'classifier_name': classifier_names,
-        'accuracy': accuracies,
-        'dataset_name': dataset_names
-    })
-
-    # Generate the critical difference diagram using imported function
-    p_values, avg_ranks, _ = wilcoxon_holm(df_perf=df_perf, alpha=0.05)
-
-    # Check if there are valid average ranks
-    if avg_ranks.empty:
-        print(f"No valid average ranks to plot for {dataset_name}.")
-        return
-
-    # Save the critical difference plot
-    plot_filename = os.path.join(PLOTS_DIR, f"{dataset_name}_cd_diagram.png")
-    draw_cd_diagram(df_perf=df_perf, alpha=0.05, title=f"Critical Difference Diagram for {dataset_name.capitalize()}", labels=True)
-
-    print(f"Critical difference diagram saved: {plot_filename}")
-
-# Main function to process all datasets
-def main():
-    print("Starting critical difference diagram generation...")
-    for dataset in datasets:
-        generate_critical_difference_diagram(dataset)
-    print("All critical difference diagrams generated successfully.")
-
-if __name__ == "__main__":
-    main()
+main("../results/best_tuning_results.csv")
