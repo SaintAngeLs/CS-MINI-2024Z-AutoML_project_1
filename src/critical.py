@@ -1,54 +1,154 @@
-import os
+# Author: Hassan Ismail Fawaz <hassan.ismail-fawaz@uha.fr>
+#         Germain Forestier <germain.forestier@uha.fr>
+#         Jonathan Weber <jonathan.weber@uha.fr>
+#         Lhassane Idoumghar <lhassane.idoumghar@uha.fr>
+#         Pierre-Alain Muller <pierre-alain.muller@uha.fr>
+# License: GPL3
+
 import numpy as np
 import pandas as pd
 import matplotlib
-import matplotlib.pyplot as plt
-import networkx
-from scipy.stats import wilcoxon, friedmanchisquare
-import math
-import operator
 
-# Set up matplotlib to use non-interactive backend
-matplotlib.use('Agg')
+matplotlib.use('agg')
+import matplotlib.pyplot as plt
+
 matplotlib.rcParams['font.family'] = 'sans-serif'
 matplotlib.rcParams['font.sans-serif'] = 'Arial'
 
-# Function to draw the critical difference (CD) diagram
+import operator
+import math
+from scipy.stats import wilcoxon
+from scipy.stats import friedmanchisquare
+import networkx
+
+# inspired from orange3 https://docs.orange.biolab.si/3/data-mining-library/reference/evaluation.cd.html
 def graph_ranks(avranks, names, p_values, cd=None, cdmethod=None, lowv=None, highv=None,
-                width=6, textspace=1, reverse=False, filename=None, labels=False):
+                width=6, textspace=1, reverse=False, filename=None, labels=False, **kwargs):
     """
-    Draws a Critical Difference (CD) graph to display the differences in methods' performance.
+    Draws a CD graph, which is used to display  the differences in methods'
+    performance. See Janez Demsar, Statistical Comparisons of Classifiers over
+    Multiple Data Sets, 7(Jan):1--30, 2006.
+
+    Needs matplotlib to work.
+
+    The image is ploted on `plt` imported using
+    `import matplotlib.pyplot as plt`.
+
+    Args:
+        avranks (list of float): average ranks of methods.
+        names (list of str): names of methods.
+        cd (float): Critical difference used for statistically significance of
+            difference between methods.
+        cdmethod (int, optional): the method that is compared with other methods
+            If omitted, show pairwise comparison of methods
+        lowv (int, optional): the lowest shown rank
+        highv (int, optional): the highest shown rank
+        width (int, optional): default width in inches (default: 6)
+        textspace (int, optional): space on figure sides (in inches) for the
+            method names (default: 1)
+        reverse (bool, optional):  if set to `True`, the lowest rank is on the
+            right (default: `False`)
+        filename (str, optional): output file name (with extension). If not
+            given, the function does not write a file.
+        labels (bool, optional): if set to `True`, the calculated avg rank
+        values will be displayed
     """
+    try:
+        import matplotlib
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+    except ImportError:
+        raise ImportError("Function graph_ranks requires matplotlib.")
+
     width = float(width)
     textspace = float(textspace)
+
+    def nth(l, n):
+        """
+        Returns only nth elemnt in a list.
+        """
+        n = lloc(l, n)
+        return [a[n] for a in l]
+
+    def lloc(l, n):
+        """
+        List location in list of list structure.
+        Enable the use of negative locations:
+        -1 is the last element, -2 second last...
+        """
+        if n < 0:
+            return len(l[0]) + n
+        else:
+            return n
+
+    def mxrange(lr):
+        """
+        Multiple xranges. Can be used to traverse matrices.
+        This function is very slow due to unknown number of
+        parameters.
+
+        >>> mxrange([3,5])
+        [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
+
+        >>> mxrange([[3,5,1],[9,0,-3]])
+        [(3, 9), (3, 6), (3, 3), (4, 9), (4, 6), (4, 3)]
+
+        """
+        if not len(lr):
+            yield ()
+        else:
+            # it can work with single numbers
+            index = lr[0]
+            if isinstance(index, int):
+                index = [index]
+            for a in range(*index):
+                for b in mxrange(lr[1:]):
+                    yield tuple([a] + list(b))
+
+    def print_figure(fig, *args, **kwargs):
+        canvas = FigureCanvasAgg(fig)
+        canvas.print_figure(*args, **kwargs)
+
+    sums = avranks
+
+    nnames = names
+    ssums = sums
+
+    if lowv is None:
+        lowv = min(1, int(math.floor(min(ssums))))
+    if highv is None:
+        highv = max(len(avranks), int(math.ceil(max(ssums))))
+
+    cline = 0.4
+
+    k = len(sums)
+
+    lines = None
+
+    linesblank = 0
     scalewidth = width - 2 * textspace
 
     def rankpos(rank):
         if not reverse:
-            return textspace + scalewidth / (highv - lowv) * (rank - lowv)
+            a = rank - lowv
         else:
-            return textspace + scalewidth / (highv - lowv) * (highv - rank)
+            a = highv - rank
+        return textspace + scalewidth / (highv - lowv) * a
 
-    sums = avranks  # Expecting avranks to be a dictionary
-    nnames = names
-
-    if lowv is None:
-        lowv = min(1, int(math.floor(min(sums.values()))))
-    if highv is None:
-        highv = max(len(sums), int(math.ceil(max(sums.values()))))
-
-    cline = 0.4
     distanceh = 0.25
+
     cline += distanceh
-    minnotsignificant = max(2 * 0.2, 0)
-    height = cline + ((len(sums) + 1) / 2) * 0.2 + minnotsignificant
+
+    # calculate height needed height of an image
+    minnotsignificant = max(2 * 0.2, linesblank)
+    height = cline + ((k + 1) / 2) * 0.2 + minnotsignificant
 
     fig = plt.figure(figsize=(width, height))
     fig.set_facecolor('white')
-    ax = fig.add_axes([0, 0, 1, 1])
+    ax = fig.add_axes([0, 0, 1, 1])  # reverse y axis
     ax.set_axis_off()
 
-    hf = 1. / height
+    hf = 1. / height  # height factor
     wf = 1. / width
 
     def hfl(l):
@@ -57,109 +157,219 @@ def graph_ranks(avranks, names, p_values, cd=None, cdmethod=None, lowv=None, hig
     def wfl(l):
         return [a * wf for a in l]
 
-    # Plot main comparison line
-    ax.plot([0, 1], [cline, cline], c='k', linewidth=2)
+    # Upper left corner is (0,0).
+    ax.plot([0, 1], [0, 1], c="w")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(1, 0)
+
+    def line(l, color='k', **kwargs):
+        """
+        Input is a list of pairs of points.
+        """
+        ax.plot(wfl(nth(l, 0)), hfl(nth(l, 1)), color=color, **kwargs)
+
+    def text(x, y, s, *args, **kwargs):
+        ax.text(wf * x, hf * y, s, *args, **kwargs)
+
+    line([(textspace, cline), (width - textspace, cline)], linewidth=2)
+
     bigtick = 0.3
     smalltick = 0.15
+    linewidth = 2.0
+    linewidth_sign = 4.0
 
-    # Plot ticks for ranks
-    for a in np.arange(lowv, highv + 0.5, 0.5):
-        tick = smalltick if a % 1 else bigtick
-        ax.plot([rankpos(a), rankpos(a)], [cline - tick / 2, cline + tick / 2], c='k', lw=2)
+    tick = None
+    for a in list(np.arange(lowv, highv, 0.5)) + [highv]:
+        tick = smalltick
+        if a == int(a):
+            tick = bigtick
+        line([(rankpos(a), cline - tick / 2),
+              (rankpos(a), cline)],
+             linewidth=2)
 
-    # Plot rank labels
-    for i in range(lowv, highv + 1):
-        ax.text(rankpos(i), cline - 0.4 * bigtick, str(i), ha="center", va="center", size=10)
+    for a in range(lowv, highv + 1):
+        text(rankpos(a), cline - tick / 2 - 0.05, str(a),
+             ha="center", va="bottom", size=16)
 
-    # Plot classifiers and their ranks
-    for idx, (name, rank) in enumerate(sorted(avranks.items(), key=lambda x: x[1])):
-        y_pos = cline + 0.4 + idx * 0.3
-        ax.text(rankpos(rank), y_pos, name, ha="center", va="center", size=12)
-        ax.plot([rankpos(rank), rankpos(rank)], [cline, y_pos], c='k', lw=2)
+    k = len(ssums)
 
-    # Draw cliques for non-significant differences
-    start_y = cline + (len(names) + 1) * 0.3
-    cliques = form_cliques(p_values, list(avranks.keys()))
-    for clique in cliques:
-        if len(clique) == 1:
+    def filter_names(name):
+        return name
+
+    space_between_names = 0.24
+
+    for i in range(math.ceil(k / 2)):
+        chei = cline + minnotsignificant + i * space_between_names
+        line([(rankpos(ssums[i]), cline),
+              (rankpos(ssums[i]), chei),
+              (textspace - 0.1, chei)],
+             linewidth=linewidth)
+        if labels:
+            text(textspace + 0.3, chei - 0.075, format(ssums[i], '.4f'), ha="right", va="center", size=10)
+        text(textspace - 0.2, chei, filter_names(nnames[i]), ha="right", va="center", size=16)
+
+    for i in range(math.ceil(k / 2), k):
+        chei = cline + minnotsignificant + (k - i - 1) * space_between_names
+        line([(rankpos(ssums[i]), cline),
+              (rankpos(ssums[i]), chei),
+              (textspace + scalewidth + 0.1, chei)],
+             linewidth=linewidth)
+        if labels:
+            text(textspace + scalewidth - 0.3, chei - 0.075, format(ssums[i], '.4f'), ha="left", va="center", size=10)
+        text(textspace + scalewidth + 0.2, chei, filter_names(nnames[i]),
+             ha="left", va="center", size=16)
+
+    # no-significance lines
+    def draw_lines(lines, side=0.05, height=0.1):
+        start = cline + 0.2
+
+        for l, r in lines:
+            line([(rankpos(ssums[l]) - side, start),
+                  (rankpos(ssums[r]) + side, start)],
+                 linewidth=linewidth_sign)
+            start += height
+            print('drawing: ', l, r)
+
+    # draw_lines(lines)
+    start = cline + 0.2
+    side = -0.02
+    height = 0.1
+
+    # draw no significant lines
+    # get the cliques
+    cliques = form_cliques(p_values, nnames)
+    i = 1
+    achieved_half = False
+    print(nnames)
+    for clq in cliques:
+        if len(clq) == 1:
             continue
-        min_idx = min(clique)
-        max_idx = max(clique)
-        ax.plot([rankpos(avranks[names[min_idx]]), rankpos(avranks[names[max_idx]])], [start_y, start_y], c='k', lw=4)
-        start_y += 0.3
-
-    if filename:
-        plt.savefig(filename)
-    plt.close()
+        print(clq)
+        min_idx = np.array(clq).min()
+        max_idx = np.array(clq).max()
+        if min_idx >= len(nnames) / 2 and achieved_half == False:
+            start = cline + 0.25
+            achieved_half = True
+        line([(rankpos(ssums[min_idx]) - side, start),
+              (rankpos(ssums[max_idx]) + side, start)],
+             linewidth=linewidth_sign)
+        start += height
 
 
 def form_cliques(p_values, nnames):
     """
-    Form cliques based on Wilcoxon-Holm corrected p-values.
+    This method forms the cliques
     """
+    # first form the numpy matrix data
     m = len(nnames)
     g_data = np.zeros((m, m), dtype=np.int64)
     for p in p_values:
-        if not p[3]:
-            i = nnames.index(p[0])
-            j = nnames.index(p[1])
-            g_data[min(i, j), max(i, j)] = 1
+        if p[3] == False:
+            i = np.where(nnames == p[0])[0][0]
+            j = np.where(nnames == p[1])[0][0]
+            min_i = min(i, j)
+            max_j = max(i, j)
+            g_data[min_i, max_j] = 1
 
     g = networkx.Graph(g_data)
     return networkx.find_cliques(g)
 
+
 def draw_cd_diagram(df_perf=None, alpha=0.05, title=None, labels=False):
     """
-    Draws a critical difference diagram based on performance data and Wilcoxon-Holm correction.
+    Draws the critical difference diagram given the list of pairwise classifiers that are
+    significant or not
     """
     p_values, average_ranks, _ = wilcoxon_holm(df_perf=df_perf, alpha=alpha)
-    graph_ranks(average_ranks.values, average_ranks.keys(), p_values, cd=None, reverse=True, width=9, textspace=1.5, labels=labels)
 
+    print(average_ranks)
+
+    for p in p_values:
+        print(p)
+
+
+    graph_ranks(average_ranks.values, average_ranks.keys(), p_values,
+                cd=None, reverse=True, width=9, textspace=1.5, labels=labels)
+
+    font = {'family': 'sans-serif',
+        'color':  'black',
+        'weight': 'normal',
+        'size': 22,
+        }
     if title:
-        plt.title(title, fontsize=22)
-    plt.savefig('cd-diagram.png', bbox_inches='tight')
+        plt.title(title,fontdict=font, y=0.9, x=0.5)
+    plt.savefig('cd-diagram.png',bbox_inches='tight')
 
 def wilcoxon_holm(alpha=0.05, df_perf=None):
     """
-    Applies the Wilcoxon signed-rank test between each pair of algorithms and applies Holm correction.
+    Applies the wilcoxon signed rank test between each pair of algorithm and then uses Holm
+    to reject the null hypothesis. Computes average ranks for use in a critical difference diagram.
     """
-    df_counts = pd.DataFrame({'count': df_perf.groupby(['classifier_name']).size()}).reset_index()
-    max_nb_datasets = df_counts['count'].max()
-    classifiers = list(df_counts.loc[df_counts['count'] == max_nb_datasets]['classifier_name'])
+    # Identify unique classifier names and dataset names
+    classifiers = pd.unique(df_perf['classifier_name'])
+    datasets = pd.unique(df_perf['dataset_name'])
 
-    # Test the null hypothesis using Friedman's test
-    friedman_p_value = friedmanchisquare(*(
-        np.array(df_perf.loc[df_perf['classifier_name'] == c]['accuracy']) for c in classifiers
-    ))[1]
-    
-    if friedman_p_value >= alpha:
-        print('The null hypothesis over the entire classifiers cannot be rejected')
-        return [], pd.Series(), 0
+    # Pivot the data to ensure consistent dataset structure across classifiers
+    df_pivot = df_perf.pivot(index='classifier_name', columns='dataset_name', values='accuracy')
 
-    # Wilcoxon signed-rank tests and Holm correction
+    # Fill any missing values by replacing them with the mean score of that classifier across datasets
+    df_pivot = df_pivot.apply(lambda row: row.fillna(row.mean()), axis=1)
+
+    # Calculate pairwise Wilcoxon signed-rank tests
     p_values = []
-    m = len(classifiers)
-    for i in range(m - 1):
-        perf_1 = np.array(df_perf.loc[df_perf['classifier_name'] == classifiers[i]]['accuracy'])
-        for j in range(i + 1, m):
-            perf_2 = np.array(df_perf.loc[df_perf['classifier_name'] == classifiers[j]]['accuracy'])
-            p_value = wilcoxon(perf_1, perf_2, zero_method='pratt')[1]
-            p_values.append((classifiers[i], classifiers[j], p_value, False))
+    for i, classifier_1 in enumerate(classifiers[:-1]):
+        for classifier_2 in classifiers[i+1:]:
+            perf_1 = df_pivot.loc[classifier_1].dropna()
+            perf_2 = df_pivot.loc[classifier_2].dropna()
+            if np.all(perf_1 == perf_2):
+                p_value = 1.0  # Indicates no difference
+            else:
+                p_value = wilcoxon(perf_1, perf_2, zero_method='zsplit').pvalue
 
-    # Holm correction
-    k = len(p_values)
-    p_values.sort(key=operator.itemgetter(2))
-    for i in range(k):
-        new_alpha = alpha / (k - i)
-        if p_values[i][2] <= new_alpha:
-            p_values[i] = (p_values[i][0], p_values[i][1], p_values[i][2], True)
-        else:
-            break
+
+            p_values.append((classifier_1, classifier_2, p_value, False))
+
+    # Apply Holm-Bonferroni correction
+    p_values.sort(key=lambda x: x[2])  # Sort by p-value
+    for i, (clf1, clf2, p_val, _) in enumerate(p_values):
+        new_alpha = alpha / (len(p_values) - i)
+        p_values[i] = (clf1, clf2, p_val, p_val <= new_alpha)
 
     # Calculate average ranks
-    rank_data = np.array([df_perf.loc[df_perf['classifier_name'] == c]['accuracy'] for c in classifiers])
-    df_ranks = pd.DataFrame(rank_data, index=classifiers).rank(ascending=False)
-    average_ranks = df_ranks.mean(axis=1).sort_values(ascending=False)
+    df_ranks = df_pivot.rank(ascending=False).mean(axis=1).sort_values(ascending=False)
 
-    return p_values, average_ranks, max_nb_datasets
+    return p_values, df_ranks, len(datasets)
 
+
+import pandas as pd
+
+# Function to prepare data in the required format and invoke the critical diagram code
+def prepare_data_for_critical_diagram(input_path, output_path):
+    # Load the input data
+    df = pd.read_csv(input_path)
+
+    # Combine model and tuning method to create a classifier name
+    df['classifier_name'] = df['model'] + '_' + df['tuning_method']
+    
+    # Sort by dataset, classifier_name, and iteration, then keep only the last iteration
+    df = df.sort_values(by=['dataset', 'classifier_name', 'iteration'])
+    df_last_iteration = df.groupby(['classifier_name', 'dataset']).last().reset_index()
+
+    # Prepare data for the critical difference diagram
+    df_critical = (
+        df_last_iteration[['classifier_name', 'dataset', 'score']]
+        .rename(columns={'dataset': 'dataset_name', 'score': 'accuracy'})
+    )
+
+    # Save to a new CSV file
+    df_critical.to_csv(output_path, index=False)
+    print(f"Data saved for critical diagram in {output_path}")
+
+    # Run the critical diagram generation
+    draw_cd_diagram(df_perf=pd.read_csv(output_path), title='Accuracy', labels=True)
+    print("Critical diagram saved as cd-diagram.png")
+
+
+
+# Call the function
+prepare_data_for_critical_diagram("../results/detailed_tuning_results.csv", "prepared_data_for_cd_diagram.csv")

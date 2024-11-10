@@ -7,11 +7,11 @@ from scipy.stats import f_oneway
 # Load tuning results from a single detailed CSV file
 def load_tuning_results(file='../results/detailed_tuning_results.csv'):
     """Load tuning results from the provided CSV file."""
-    return pd.read_csv(file,  on_bad_lines='warn')
+    return pd.read_csv(file, on_bad_lines='warn')
 
 # Visualize results with multiple standalone plots
 def visualize_results(df, save_dir='plots'):
-    """Create and save separate boxplots to compare performance scores across tuning methods and models for each dataset."""
+    """Create and save separate boxplots and stripplots to compare performance scores across tuning methods and models for each dataset."""
     
     # Ensure the directory for saving plots exists
     os.makedirs(save_dir, exist_ok=True)
@@ -22,18 +22,23 @@ def visualize_results(df, save_dir='plots'):
         plt.figure(figsize=(10, 6))
         subset = df[df['dataset'] == dataset]
         
-        # Check data distribution with a stripplot
+        # Add boxplot to visualize the distribution of scores for each tuning method and model
+        sns.boxplot(x="model", y="score", hue="tuning_method", data=subset, dodge=True, fliersize=0,
+                    palette={"grid_search": "blue", "random_search": "orange", "bayesian_optimization": "green"})
+        
+        # Overlay stripplot to show individual data points
         sns.stripplot(x="model", y="score", hue="tuning_method", data=subset, dodge=True,
                       palette={"grid_search": "blue", "random_search": "orange", "bayesian_optimization": "green"},
                       marker="o", alpha=0.7)
+        
+        # Avoid duplicate legends
+        handles, labels = plt.gca().get_legend_handles_labels()
+        plt.legend(handles[0:3], labels[0:3], title="Tuning Method", bbox_to_anchor=(1.05, 1), loc='upper left')
         
         # Add titles and labels
         plt.title(f"Comparison of Tuning Methods for {dataset} Dataset")
         plt.xlabel("Model")
         plt.ylabel("Score")
-        
-        # Place the legend outside the plot
-        plt.legend(title="Tuning Method", bbox_to_anchor=(1.05, 1), loc='upper left')
         
         # Save the plot to the specified directory
         plot_filename = os.path.join(save_dir, f"{dataset}_tuning_methods_comparison.png")
