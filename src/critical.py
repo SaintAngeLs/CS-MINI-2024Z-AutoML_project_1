@@ -341,35 +341,3 @@ def wilcoxon_holm(alpha=0.05, df_perf=None):
     return p_values, df_ranks, len(datasets)
 
 
-import pandas as pd
-
-# Function to prepare data in the required format and invoke the critical diagram code
-def prepare_data_for_critical_diagram(input_path, output_path):
-    # Load the input data
-    df = pd.read_csv(input_path)
-
-    # Combine model and tuning method to create a classifier name
-    df['classifier_name'] = df['model'] + '_' + df['tuning_method']
-    
-    # Sort by dataset, classifier_name, and iteration, then keep only the last iteration
-    df = df.sort_values(by=['dataset', 'classifier_name', 'iteration'])
-    df_last_iteration = df.groupby(['classifier_name', 'dataset']).last().reset_index()
-
-    # Prepare data for the critical difference diagram
-    df_critical = (
-        df_last_iteration[['classifier_name', 'dataset', 'score']]
-        .rename(columns={'dataset': 'dataset_name', 'score': 'accuracy'})
-    )
-
-    # Save to a new CSV file
-    df_critical.to_csv(output_path, index=False)
-    print(f"Data saved for critical diagram in {output_path}")
-
-    # Run the critical diagram generation
-    draw_cd_diagram(df_perf=pd.read_csv(output_path), title='Accuracy', labels=True)
-    print("Critical diagram saved as cd-diagram.png")
-
-
-
-# Call the function
-prepare_data_for_critical_diagram("../results/detailed_tuning_results.csv", "prepared_data_for_cd_diagram.csv")

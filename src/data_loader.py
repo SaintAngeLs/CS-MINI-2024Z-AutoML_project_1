@@ -1,5 +1,15 @@
 import pandas as pd
-from sklearn.datasets import load_breast_cancer, load_iris, fetch_california_housing, load_wine, load_digits, load_diabetes, load_linnerud
+from sklearn.datasets import (
+    load_breast_cancer,
+    load_iris,
+    fetch_california_housing,
+    load_wine,
+    load_digits,
+    load_diabetes,
+    load_linnerud
+)
+from sklearn.utils import column_or_1d
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 class DatasetLoader:
     def load(self):
@@ -12,7 +22,9 @@ class SklearnDatasetLoader(DatasetLoader):
     
     def load(self):
         data = self.sklearn_loader(as_frame=self.as_frame)
-        return data.frame, data.target
+        X = data.data
+        y = data.target
+        return X, y
 
 class CSVFileLoader(DatasetLoader):
     def __init__(self, file_path, delimiter=',', header='infer', column_names=None):
@@ -73,12 +85,43 @@ class DatasetLoaderFactory:
         else:
             raise ValueError(f"Dataset '{name}' is not supported.")
 
+def preprocess_targets(y):
+    """
+    Ensure the target `y` is consistent for classification or regression tasks.
+    Converts targets to numerical values if necessary.
+    """
+    y = column_or_1d(y)  # Ensures y is a 1-dimensional array
+    if y.dtype == 'object' or type(y[0]).__name__ == 'str':
+        # Convert string labels or mixed types to integers for classification
+        y = LabelEncoder().fit_transform(y)
+    elif y.dtype in ['float', 'int']:
+        # Ensure numeric type for regression tasks
+        y = pd.to_numeric(y, errors='coerce')
+    return y
+
+def preprocess_features(X):
+    """
+    Standardize the features using StandardScaler for better model performance.
+    
+    :param X: Feature matrix
+    :return: Scaled feature matrix
+    """
+    scaler = StandardScaler()
+    return scaler.fit_transform(X)
+
 def load_dataset(name):
     """
-    Loads the dataset specified by name using the appropriate loader.
+    Loads the dataset specified by name using the appropriate loader
+    and applies preprocessing to the features and targets.
     
     :param name: Name of the dataset.
-    :return: Features (X) and target (y).
+    :return: Preprocessed features (X) and target (y).
     """
     loader = DatasetLoaderFactory.get_loader(name)
-    return loader.load()
+    X, y = loader.load()
+    
+    # Preprocess features and targets
+    X = preprocess_features(X)
+    y = preprocess_targets(y)
+    
+    return X, y
