@@ -136,7 +136,7 @@ class MetricsVisualizer:
             self.plot_accuracy_trend(dataset_df, dataset)
 
 
-# Usage Example
+
 if __name__ == "__main__":
     input_path = "../results/evaluation_metrics.csv"
     visualizer = MetricsVisualizer(input_path=input_path)

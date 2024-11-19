@@ -67,7 +67,7 @@ class CriticalDiagram:
         self.generate_diagram()
 
 
-# Usage Example
+
 if __name__ == "__main__":
     input_path = "./preprocessed_data/all_iterations_unique_tuning.csv"
 

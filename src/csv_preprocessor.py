@@ -138,7 +138,7 @@ class CSVPreprocessorCoordinator:
         self.metrics_preprocessor.process()
 
 
-# Usage Example
+
 if __name__ == "__main__":
     coordinator = CSVPreprocessorCoordinator(
         tuning_file="../results/detailed_tuning_results.csv",

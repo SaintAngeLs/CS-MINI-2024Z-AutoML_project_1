@@ -74,7 +74,7 @@ class ResultsVisualizer:
         self.plot_performance_scores(tuning_df)
 
 
-# Usage Example
+
 if __name__ == "__main__":
     visualizer = ResultsVisualizer(
         tuning_file="./preprocessed_data/all_iterations_unique_tuning.csv",
