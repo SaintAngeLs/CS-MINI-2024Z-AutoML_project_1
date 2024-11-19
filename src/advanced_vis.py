@@ -55,7 +55,6 @@ class MetricsVisualizer:
         :param metric_key: Specific metric key to visualize (e.g., 'precision').
         :param dataset: Name of the dataset being processed.
         """
-        # Extract the metric key from the metric dictionary
         df.loc[:, metric_key] = df.apply(
             lambda row: self.extract_metrics(row, metric_column).get(metric_key, None), axis=1
         )
@@ -115,7 +114,6 @@ class MetricsVisualizer:
             return
         print("Data loaded successfully.")
 
-        # Process each dataset separately
         datasets = df['dataset'].unique()
         for dataset in datasets:
             print(f"Processing dataset: {dataset}")
@@ -136,8 +134,78 @@ class MetricsVisualizer:
             self.plot_accuracy_trend(dataset_df, dataset)
 
 
+class TunabilityPlotter:
+    def __init__(self, input_path, output_path="../results/tunability_scores_swarmplot.png"):
+        """
+        Initializes the TunabilityPlotter with the input path and output path.
+
+        :param input_path: Path to the detailed tuning results CSV file.
+        :param output_path: Path to save the tunability plot.
+        """
+        self.input_path = input_path
+        self.output_path = output_path
+
+    def load_data(self):
+        """
+        Loads the detailed tuning results data.
+
+        :return: DataFrame containing the tuning results.
+        """
+        try:
+            df = pd.read_csv(self.input_path, on_bad_lines="skip")
+            return df
+        except Exception as e:
+            print(f"Error loading data: {e}")
+            raise
+
+    def plot_tunability(self):
+        """
+        Creates and saves the tunability plot.
+        """
+        print("Loading data for tunability plot...")
+        df = self.load_data()
+        if df.empty:
+            print("No data available for tunability plot. Exiting.")
+            return
+
+        if 'mean_test_score' not in df.columns:
+            print("Error: 'mean_test_score' column is missing in the input data.")
+            return
+
+        # Exclude "auto_insurance" dataset
+        df = df[df['dataset'] != 'auto_insurance']
+
+        # Calculate tunability
+        tunability = (
+            df.groupby(['dataset', 'tuning_method'])['mean_test_score']
+            .std()
+            .reset_index()
+            .rename(columns={'mean_test_score': 'tunability'})
+        )
+        tunability['tuning_method'] = tunability['tuning_method'].str.replace('_', ' ').str.capitalize()
+
+        # Create the swarm plot
+        plt.figure(figsize=(10, 6))
+        sns.swarmplot(x='tuning_method', y='tunability', hue='dataset', data=tunability, palette='viridis', size=10)
+        plt.title('Tunability Scores for Different Hyperparameter Search Methods')
+        plt.xlabel('Hyperparameter Search Method')
+        plt.ylabel('Tunability (Standard Deviation of Mean Test Score)')
+        plt.legend(title='Dataset', bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.tight_layout()
+
+        # Save the plot
+        plt.savefig(self.output_path)
+        plt.close()
+        print(f"Saved tunability plot to {self.output_path}")
+
 
 if __name__ == "__main__":
+    # Visualizer for evaluation metrics
     input_path = "../results/evaluation_metrics.csv"
     visualizer = MetricsVisualizer(input_path=input_path)
     visualizer.run()
+
+    # Tunability plotter
+    tuning_results_path = "../results/detailed_tuning_results.csv"
+    tunability_plotter = TunabilityPlotter(input_path=tuning_results_path)
+    tunability_plotter.plot_tunability()
